@@ -1,33 +1,760 @@
+
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
-const projects = [
-  { name: "premspencilart.in", status: "Ready to audit", score: "—" },
-  { name: "Add your website", status: "Create a project", score: "—" },
+type Project = {
+  id: string;
+  name: string;
+  website_url: string;
+  created_at: string;
+  updated_at?: string;
+};
+
+type SeoIssue = {
+  code: string;
+  severity: "error" | "warning" | "info";
+  message: string;
+};
+
+type CrawledPage = {
+  url: string;
+  status: number;
+  title: string | null;
+  titleLength: number;
+  metaDescription: string | null;
+  metaDescriptionLength: number;
+  h1Count: number;
+  h1Texts: string[];
+  canonical: string | null;
+  robotsMeta: string | null;
+  wordCount: number;
+  internalLinks: number;
+  brokenInternalLinks: number;
+  issues: SeoIssue[];
+};
+
+type CrawlResult = {
+  startUrl: string;
+  finishedAt: string;
+  pagesScanned: number;
+  pages: CrawledPage[];
+  discoveredUrls: number;
+  truncated: boolean;
+  errors: string[];
+};
+
+type AuditRecord = {
+  id: string;
+  project_id: string;
+  status: "completed" | "failed";
+  pages_scanned: number;
+  results: CrawlResult;
+  created_at: string;
+};
+
+type NavigationItem = {
+  label: string;
+  icon: string;
+};
+
+const navigation: NavigationItem[] = [
+  { label: "Overview", icon: "⌂" },
+  { label: "Projects", icon: "▦" },
+  { label: "Site Audit", icon: "⌁" },
+  { label: "Keywords", icon: "⌕" },
+  { label: "Competitors", icon: "◎" },
+  { label: "Reports", icon: "▤" },
+  { label: "Plans", icon: "◇" },
 ];
 
-const activities = [
-  { title: "Technical SEO audit", detail: "Find crawling and indexing issues", icon: "⌕" },
-  { title: "Keyword research", detail: "Discover keywords worth targeting", icon: "⌘" },
-  { title: "Competitor analysis", detail: "Compare your website with competitors", icon: "⇄" },
-  { title: "Content insights", detail: "Find opportunities to improve your pages", icon: "✳" },
-];
+const upcomingFeatures: Record<string, string> = {
+  Keywords:
+    "Keyword discovery, search volume, difficulty, and ranking tracking are planned for a future release.",
+  Competitors:
+    "Competitor domain analysis and keyword gap discovery are planned for a future release.",
+  Plans:
+    "Subscription plans and billing are not connected yet.",
+};
 
-export default function Home() {
+function formatDate(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+
+  return date.toLocaleString();
+}
+
+function getIssueCount(
+  pages: CrawledPage[],
+  severity: SeoIssue["severity"]
+): number {
+  return pages.reduce(
+    (total, page) =>
+      total +
+      page.issues.filter((issue) => issue.severity === severity).length,
+    0
+  );
+}
+
+function statusClass(status: number): string {
+  if (status >= 200 && status < 300) {
+    return "border-emerald-400/20 bg-emerald-400/10 text-emerald-300";
+  }
+
+  if (status >= 300 && status < 400) {
+    return "border-amber-400/20 bg-amber-400/10 text-amber-300";
+  }
+
+  return "border-red-400/20 bg-red-400/10 text-red-300";
+}
+
+function severityClass(severity: SeoIssue["severity"]): string {
+  if (severity === "error") {
+    return "border-red-400/20 bg-red-400/10 text-red-300";
+  }
+
+  if (severity === "warning") {
+    return "border-amber-400/20 bg-amber-400/10 text-amber-300";
+  }
+
+  return "border-sky-400/20 bg-sky-400/10 text-sky-300";
+}
+
+export default function DashboardPage() {
   const [active, setActive] = useState("Overview");
+
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+
   const [showProject, setShowProject] = useState(false);
   const [domain, setDomain] = useState("");
+  const [savingProject, setSavingProject] = useState(false);
 
-  const navigation = [
-    { label: "Overview", icon: "▦" },
-    { label: "Projects", icon: "▣" },
-    { label: "Site Audit", icon: "⌕" },
-    { label: "Keywords", icon: "⌘" },
-    { label: "Competitors", icon: "⇄" },
-    { label: "Content", icon: "✳" },
-    { label: "Reports", icon: "▤" },
-  ];
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(
+    null
+  );
+  const [auditingProjectId, setAuditingProjectId] = useState<string | null>(
+    null
+  );
+
+  const [audits, setAudits] = useState<AuditRecord[]>([]);
+  const [auditsLoading, setAuditsLoading] = useState(false);
+  const [auditsLoaded, setAuditsLoaded] = useState(false);
+
+  const [selectedAudit, setSelectedAudit] = useState<AuditRecord | null>(null);
+
+  const [signingOut, setSigningOut] = useState(false);
+  const [projectError, setProjectError] = useState("");
+  const [projectMessage, setProjectMessage] = useState("");
+
+  const [auditError, setAuditError] = useState("");
+  const [auditMessage, setAuditMessage] = useState("");
+
+  const loadProjects = useCallback(async () => {
+    setProjectsLoading(true);
+
+    try {
+      const response = await fetch("/api/projects", {
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to load projects.");
+      }
+
+      setProjects(result.projects ?? []);
+      setProjectError("");
+    } catch (error) {
+      setProjectError(
+        error instanceof Error ? error.message : "Unable to load projects."
+      );
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, []);
+
+  const loadAudits = useCallback(async (projectId?: string) => {
+    setAuditsLoading(true);
+    setAuditError("");
+
+    try {
+      const params = new URLSearchParams();
+
+      if (projectId) {
+        params.set("project_id", projectId);
+      }
+
+      const query = params.toString();
+      const response = await fetch(
+        query ? `/api/audits?${query}` : "/api/audits",
+        { cache: "no-store" }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to load audit history.");
+      }
+
+      setAudits(result.audits ?? []);
+      setAuditsLoaded(true);
+    } catch (error) {
+      setAuditError(
+        error instanceof Error ? error.message : "Unable to load audit history."
+      );
+    } finally {
+      setAuditsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects]);
+
+  async function handleAddProject(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingProject(true);
+    setProjectError("");
+    setProjectMessage("");
+
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ website_url: domain.trim() }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to create project.");
+      }
+
+      if (!result.project) {
+        throw new Error("The server did not return the saved project.");
+      }
+
+      setProjects((current) => [
+        result.project,
+        ...current.filter(
+          (project) => project.id !== result.project.id
+        ),
+      ]);
+
+      setDomain("");
+      setShowProject(false);
+      setActive("Projects");
+      setProjectMessage("Website added successfully.");
+    } catch (error) {
+      setProjectError(
+        error instanceof Error
+          ? error.message
+          : "Unable to create project. Please try again."
+      );
+    } finally {
+      setSavingProject(false);
+    }
+  }
+
+  async function handleDeleteProject(project: Project) {
+    const confirmed = window.confirm(
+      `Delete "${project.name}"?\n\nIts saved audit history will also be deleted. This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingProjectId(project.id);
+    setProjectError("");
+    setProjectMessage("");
+    setAuditError("");
+
+    try {
+      const response = await fetch(
+        `/api/projects/${encodeURIComponent(project.id)}`,
+        { method: "DELETE" }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to delete project.");
+      }
+
+      setProjects((current) =>
+        current.filter((item) => item.id !== project.id)
+      );
+
+      setAudits((current) =>
+        current.filter((audit) => audit.project_id !== project.id)
+      );
+
+      if (selectedAudit?.project_id === project.id) {
+        setSelectedAudit(null);
+      }
+
+      setProjectMessage(`${project.name} was deleted.`);
+    } catch (error) {
+      setProjectError(
+        error instanceof Error ? error.message : "Unable to delete project."
+      );
+    } finally {
+      setDeletingProjectId(null);
+    }
+  }
+
+  async function handleRunAudit(project: Project) {
+    setAuditingProjectId(project.id);
+    setAuditError("");
+    setAuditMessage("");
+    setProjectError("");
+    setSelectedAudit(null);
+
+    try {
+      const response = await fetch("/api/audits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: project.id }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "The SEO audit failed.");
+      }
+
+      const savedAudit = result.audit as AuditRecord | undefined;
+
+      if (!savedAudit?.id || !savedAudit.results) {
+        throw new Error(
+          "The server response did not contain a saved audit report."
+        );
+      }
+
+      setAudits((current) => [
+        savedAudit,
+        ...current.filter((item) => item.id !== savedAudit.id),
+      ]);
+
+      setAuditsLoaded(true);
+      setSelectedAudit(savedAudit);
+      setActive("Reports");
+      setAuditMessage(
+        `Audit completed. ${savedAudit.pages_scanned} pages were scanned.`
+      );
+    } catch (error) {
+      setAuditError(
+        error instanceof Error
+          ? error.message
+          : "The SEO audit could not be completed."
+      );
+    } finally {
+      setAuditingProjectId(null);
+    }
+  }
+
+  async function openAuditHistory(projectId?: string) {
+    setActive(projectId ? "Site Audit" : "Reports");
+    setSelectedAudit(null);
+    setAuditMessage("");
+    await loadAudits(projectId);
+  }
+
+  async function handleLogout() {
+    setSigningOut(true);
+    setProjectError("");
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signOut();
+
+      if (error) throw error;
+
+      window.location.href = "/auth";
+    } catch (error) {
+      setProjectError(
+        error instanceof Error ? error.message : "Unable to sign out."
+      );
+      setSigningOut(false);
+    }
+  }
+
+  function openProjectModal() {
+    setProjectError("");
+    setProjectMessage("");
+    setShowProject(true);
+  }
+
+  function selectNavigation(label: string) {
+    setActive(label);
+    setProjectError("");
+    setAuditError("");
+    setAuditMessage("");
+    setSelectedAudit(null);
+
+    if (label === "Reports") {
+      void loadAudits();
+    } else if (label === "Site Audit") {
+      void loadAudits();
+    }
+  }
+
+  function renderProjects() {
+    if (projectsLoading) {
+      return (
+        <p className="py-8 text-sm text-slate-500">
+          Loading your projects...
+        </p>
+      );
+    }
+
+    if (projects.length === 0) {
+      return (
+        <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center">
+          <p className="text-sm font-medium">No websites added yet</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Add a website to start your SEO workspace.
+          </p>
+          <button
+            onClick={openProjectModal}
+            className="mt-4 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
+          >
+            Add your first website
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="divide-y divide-white/[0.07]">
+        {projects.map((project) => (
+          <div
+            key={project.id}
+            className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.05] text-lg text-cyan-300">
+                ◎
+              </div>
+
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">
+                  {project.name}
+                </div>
+                <a
+                  href={project.website_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 block break-all text-xs text-slate-500 hover:text-cyan-300"
+                >
+                  {project.website_url}
+                </a>
+                <div className="mt-1 text-xs text-slate-600">
+                  Added {formatDate(project.created_at)}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <button
+                onClick={() => void handleRunAudit(project)}
+                disabled={
+                  auditingProjectId !== null || deletingProjectId !== null
+                }
+                className="rounded-lg bg-cyan-300 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {auditingProjectId === project.id
+                  ? "Crawling..."
+                  : "Run SEO audit"}
+              </button>
+
+              <button
+                onClick={() => void openAuditHistory(project.id)}
+                disabled={auditingProjectId !== null}
+                className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/[0.05] disabled:opacity-50"
+              >
+                View reports
+              </button>
+
+              <button
+                onClick={() => void handleDeleteProject(project)}
+                disabled={
+                  deletingProjectId !== null || auditingProjectId !== null
+                }
+                className="rounded-lg border border-red-400/20 px-3 py-2 text-xs text-red-300 hover:bg-red-400/10 disabled:opacity-50"
+              >
+                {deletingProjectId === project.id ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  function renderAuditReport(audit: AuditRecord) {
+    const result = audit.results;
+    const pages = Array.isArray(result?.pages) ? result.pages : [];
+    const errors = Array.isArray(result?.errors) ? result.errors : [];
+
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+          <div>
+            <button
+              onClick={() => {
+                setSelectedAudit(null);
+                setActive("Reports");
+              }}
+              className="mb-3 text-xs text-cyan-300 hover:text-cyan-200"
+            >
+              ← Back to reports
+            </button>
+
+            <h2 className="text-xl font-semibold">Technical SEO report</h2>
+            <p className="mt-2 break-all text-sm text-slate-400">
+              {result?.startUrl || "Website audit"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Completed {formatDate(audit.created_at)}
+            </p>
+          </div>
+
+          <span className="w-fit rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-300">
+            Saved report
+          </span>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "Pages scanned", value: pages.length },
+            { label: "Errors", value: getIssueCount(pages, "error") },
+            { label: "Warnings", value: getIssueCount(pages, "warning") },
+            { label: "Informational", value: getIssueCount(pages, "info") },
+          ].map((metric) => (
+            <div
+              key={metric.label}
+              className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4"
+            >
+              <div className="text-xs text-slate-500">{metric.label}</div>
+              <div className="mt-2 text-2xl font-semibold">
+                {metric.value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {result?.truncated && (
+          <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-sm text-amber-200">
+            The crawl reached a configured limit. Some discovered pages may
+            not have been scanned.
+          </div>
+        )}
+
+        {errors.length > 0 && (
+          <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-4">
+            <h3 className="text-sm font-semibold text-amber-200">
+              Crawl notices ({errors.length})
+            </h3>
+            <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-400">
+              {errors.map((error, index) => (
+                <li key={`${index}-${error}`} className="break-words">
+                  {error}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {pages.length === 0 ? (
+          <div className="rounded-xl border border-white/[0.08] p-6 text-sm text-slate-400">
+            No HTML pages were successfully analyzed. Check the crawl notices
+            above and try again.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {pages.map((page, index) => (
+              <div
+                key={`${page.url}-${index}`}
+                className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-4 sm:p-5"
+              >
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                  <div className="min-w-0">
+                    <a
+                      href={page.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="break-all text-sm font-medium text-cyan-300 hover:text-cyan-200"
+                    >
+                      {page.url}
+                    </a>
+                    <p className="mt-2 break-words text-sm text-slate-300">
+                      {page.title || "No page title found"}
+                    </p>
+                  </div>
+
+                  <span
+                    className={`w-fit shrink-0 rounded-md border px-2.5 py-1 text-xs ${statusClass(
+                      page.status
+                    )}`}
+                  >
+                    HTTP {page.status}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+                  <div className="rounded-lg bg-black/20 p-3">
+                    <div className="text-slate-500">Meta description</div>
+                    <div className="mt-1 break-words text-slate-300">
+                      {page.metaDescription || "Missing"}
+                    </div>
+                    <div className="mt-1 text-slate-500">
+                      {page.metaDescriptionLength} characters
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-black/20 p-3">
+                    <div className="text-slate-500">Headings and content</div>
+                    <div className="mt-1 text-slate-300">
+                      H1 headings: {page.h1Count}
+                    </div>
+                    <div className="mt-1 text-slate-300">
+                      Approximate words: {page.wordCount}
+                    </div>
+                    {page.h1Texts.length > 0 && (
+                      <div className="mt-2 break-words text-slate-400">
+                        {page.h1Texts.join(" · ")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 break-all text-xs text-slate-500">
+                  Canonical: {page.canonical || "Not declared"}
+                </div>
+
+                <div className="mt-1 break-words text-xs text-slate-500">
+                  Robots: {page.robotsMeta || "No robots meta tag detected"}
+                  {" · "}Internal links: {page.internalLinks}
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {page.issues.length === 0 ? (
+                    <p className="text-xs text-emerald-300">
+                      No issues detected by the current checks.
+                    </p>
+                  ) : (
+                    page.issues.map((issue, issueIndex) => (
+                      <div
+                        key={`${issue.code}-${issueIndex}`}
+                        className="flex flex-col gap-2 sm:flex-row sm:items-start"
+                      >
+                        <span
+                          className={`w-fit shrink-0 rounded-md border px-2 py-1 text-[10px] uppercase ${severityClass(
+                            issue.severity
+                          )}`}
+                        >
+                          {issue.severity}
+                        </span>
+                        <span className="text-xs leading-5 text-slate-300">
+                          {issue.message}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-xs leading-5 text-slate-500">
+          Findings are based on the HTML returned to the crawler and the
+          current checks. They are not a Google ranking score or a guarantee
+          of how search engines will index the site.
+        </p>
+      </div>
+    );
+  }
+
+  function renderAuditHistory() {
+    if (auditsLoading) {
+      return (
+        <p className="py-8 text-sm text-slate-500">
+          Loading saved audit reports...
+        </p>
+      );
+    }
+
+    if (audits.length === 0) {
+      return (
+        <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center">
+          <p className="text-sm font-medium">No saved reports yet</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Go to Projects and run an SEO audit to create your first report.
+          </p>
+          <button
+            onClick={() => setActive("Projects")}
+            className="mt-4 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
+          >
+            Open projects
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="divide-y divide-white/[0.07]">
+        {audits.map((audit) => {
+          const project = projects.find(
+            (item) => item.id === audit.project_id
+          );
+          const result = audit.results;
+
+          return (
+            <div
+              key={audit.id}
+              className="flex flex-col justify-between gap-4 py-5 sm:flex-row sm:items-center"
+            >
+              <div className="min-w-0">
+                <div className="text-sm font-medium">
+                  {project?.name || "Website audit"}
+                </div>
+                <div className="mt-1 break-all text-xs text-slate-500">
+                  {project?.website_url || result?.startUrl || "Unknown website"}
+                </div>
+                <div className="mt-2 text-xs text-slate-500">
+                  {formatDate(audit.created_at)}
+                  {" · "}
+                  {audit.pages_scanned} pages scanned
+                </div>
+              </div>
+
+              <button
+                onClick={() => setSelectedAudit(audit)}
+                className="w-fit rounded-lg border border-cyan-300/20 px-3 py-2 text-xs font-medium text-cyan-300 hover:bg-cyan-300/10"
+              >
+                Open report →
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const pageTitles: Record<string, string> = {
+    Overview: "Your SEO command center",
+    Projects: "Your websites",
+    "Site Audit": "Technical SEO audits",
+    Reports: "Audit reports",
+    Keywords: "Keyword research",
+    Competitors: "Competitor intelligence",
+    Plans: "RankPilot plans",
+  };
 
   return (
     <main className="min-h-screen bg-[#080b12] text-slate-100">
@@ -50,7 +777,7 @@ export default function Home() {
           {navigation.map((item) => (
             <button
               key={item.label}
-              onClick={() => setActive(item.label)}
+              onClick={() => selectNavigation(item.label)}
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${
                 active === item.label
                   ? "border border-cyan-300/15 bg-cyan-300/10 font-medium text-cyan-300"
@@ -59,9 +786,9 @@ export default function Home() {
             >
               <span className="w-5 text-center text-lg">{item.icon}</span>
               {item.label}
-              {item.label === "Site Audit" && (
-                <span className="ml-auto rounded-md bg-white/[0.06] px-2 py-0.5 text-[10px] text-slate-500">
-                  NEW
+              {["Keywords", "Competitors", "Plans"].includes(item.label) && (
+                <span className="ml-auto rounded-md bg-white/[0.06] px-2 py-0.5 text-[9px] text-slate-500">
+                  SOON
                 </span>
               )}
             </button>
@@ -69,38 +796,54 @@ export default function Home() {
         </nav>
 
         <div className="mt-auto rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
-          <div className="mb-2 text-sm font-semibold">Unlock more insights</div>
+          <div className="mb-2 text-sm font-semibold">
+            Build your SEO visibility
+          </div>
           <p className="mb-4 text-xs leading-5 text-slate-500">
-            Advanced audits, keyword opportunities and competitor intelligence.
+            Start with a technical crawl, then fix the issues it discovers.
           </p>
           <button
-            onClick={() => setActive("Plans")}
+            onClick={() => selectNavigation("Site Audit")}
             className="w-full rounded-lg border border-white/10 px-3 py-2 text-xs font-medium hover:bg-white/[0.06]"
           >
-            Explore plans ↗
+            Open site audits ↗
           </button>
         </div>
-        <div className="mt-5 flex items-center gap-3 border-t border-white/[0.07] pt-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-sm font-semibold">P</div>
-          <div>
-            <div className="text-sm font-medium">Your workspace</div>
-            <div className="text-xs text-slate-500">Free plan · Preview</div>
+
+        <div className="mt-5 border-t border-white/[0.07] pt-5">
+          <div className="mb-3 flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-sm font-semibold">
+              P
+            </div>
+            <div>
+              <div className="text-sm font-medium">Your workspace</div>
+              <div className="text-xs text-slate-500">Free plan</div>
+            </div>
           </div>
+          <button
+            onClick={handleLogout}
+            disabled={signingOut}
+            className="w-full rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400 hover:bg-white/[0.05] hover:text-white disabled:opacity-60"
+          >
+            {signingOut ? "Signing out..." : "Sign out"}
+          </button>
         </div>
       </aside>
 
       <section className="lg:ml-64">
-        <header className="sticky top-0 z-10 flex h-[72px] items-center justify-between border-b border-white/[0.07] bg-[#080b12]/90 px-5 backdrop-blur-xl sm:px-8">
+        <header className="sticky top-0 z-10 flex min-h-[72px] items-center justify-between gap-4 border-b border-white/[0.07] bg-[#080b12]/90 px-5 py-3 backdrop-blur-xl sm:px-8">
           <div className="text-sm text-slate-500">
-            Workspace <span className="mx-2 text-slate-700">/</span>
+            Workspace
+            <span className="mx-2 text-slate-700">/</span>
             <span className="text-slate-200">{active}</span>
           </div>
+
           <div className="flex items-center gap-3">
             <span className="hidden rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-400 sm:inline-flex">
-              ◉ Demo interface
+              Supabase connected
             </span>
             <button
-              onClick={() => setShowProject(true)}
+              onClick={openProjectModal}
               className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-200"
             >
               + Add project
@@ -109,139 +852,258 @@ export default function Home() {
         </header>
 
         <div className="mx-auto max-w-[1400px] p-5 sm:p-8">
-          <div className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-end">
-            <div>
-              <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-cyan-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
-                Search intelligence platform
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-                Your SEO command center<span className="text-cyan-300">.</span>
-              </h1>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
-                Find what&apos;s holding your website back. Discover issues,
-                uncover opportunities and turn search data into action.
-              </p>
+          <div className="mb-8">
+            <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-cyan-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
+              Search intelligence platform
             </div>
-            <button
-              onClick={() => setShowProject(true)}
-              className="shrink-0 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-medium hover:bg-white/[0.07]"
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+              {selectedAudit ? "Audit report" : pageTitles[active]}
+              <span className="text-cyan-300">.</span>
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
+              {selectedAudit
+                ? "Review page-level technical SEO findings from this saved crawl."
+                : active === "Overview"
+                  ? "Manage your websites, run technical crawls, and review real audit findings."
+                  : active === "Projects"
+                    ? "Add, audit, review, or remove your tracked websites."
+                    : active === "Site Audit"
+                      ? "Run a multi-page technical crawl against one of your saved websites."
+                      : active === "Reports"
+                        ? "Open previous audits saved to your account."
+                        : upcomingFeatures[active] || ""}
+            </p>
+          </div>
+
+          {projectError && (
+            <div
+              role="alert"
+              className="mb-5 rounded-xl border border-red-400/20 bg-red-400/5 p-4 text-sm text-red-300"
             >
-              Start an SEO audit ↗
-            </button>
-          </div>
-
-          <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {[
-              { label: "Tracked websites", value: "—", note: "No projects connected", icon: "◎" },
-              { label: "SEO health score", value: "—", note: "Requires a real audit", icon: "◉" },
-              { label: "Keywords tracked", value: "—", note: "No keyword data yet", icon: "⌘" },
-              { label: "Issues discovered", value: "—", note: "Run your first audit", icon: "⌁" },
-            ].map((metric) => (
-              <div key={metric.label} className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-5">
-                <div className="mb-5 flex items-center justify-between">
-                  <span className="text-sm text-slate-400">{metric.label}</span>
-                  <span className="text-xl text-slate-500">{metric.icon}</span>
-                </div>
-                <div className="text-3xl font-semibold tracking-tight">{metric.value}</div>
-                <div className="mt-2 text-xs text-slate-500">{metric.note}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mb-8 grid gap-5 xl:grid-cols-[1.55fr_1fr]">
-            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold">SEO performance</h2>
-                  <p className="mt-1 text-sm text-slate-500">Your search visibility over time</p>
-                </div>
-                <span className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-500">
-                  Last 30 days
-                </span>
-              </div>
-              <div className="flex min-h-52 flex-col items-center justify-center py-10 text-center">
-                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.06] text-2xl text-cyan-300">
-                  ↗
-                </div>
-                <div className="text-sm font-medium">Your data starts here</div>
-                <p className="mt-2 max-w-xs text-xs leading-5 text-slate-500">
-                  Connect a website and run an audit before performance insights appear.
-                </p>
-              </div>
-              <div className="grid grid-cols-3 border-t border-white/[0.07] pt-4 text-center">
-                <div><div className="text-lg font-semibold">—</div><div className="mt-1 text-xs text-slate-500">Clicks</div></div>
-                <div className="border-x border-white/[0.07]"><div className="text-lg font-semibold">—</div><div className="mt-1 text-xs text-slate-500">Impressions</div></div>
-                <div><div className="text-lg font-semibold">—</div><div className="mt-1 text-xs text-slate-500">Avg. position</div></div>
-              </div>
+              {projectError}
             </div>
+          )}
 
-            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
-              <div className="mb-6">
-                <h2 className="text-lg font-semibold">Quick actions</h2>
-                <p className="mt-1 text-sm text-slate-500">Choose your next SEO move</p>
-              </div>
-              <div className="space-y-3">
-                {activities.map((item) => (
-                  <button
-                    key={item.title}
-                    onClick={() => item.title === "Technical SEO audit" ? setShowProject(true) : setActive(item.title)}
-                    className="flex w-full items-center gap-4 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3.5 text-left transition hover:border-cyan-300/20 hover:bg-cyan-300/[0.035]"
+          {projectMessage && (
+            <div
+              role="status"
+              className="mb-5 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-sm text-emerald-300"
+            >
+              {projectMessage}
+            </div>
+          )}
+
+          {auditError && (
+            <div
+              role="alert"
+              className="mb-5 rounded-xl border border-red-400/20 bg-red-400/5 p-4 text-sm text-red-300"
+            >
+              {auditError}
+            </div>
+          )}
+
+          {auditMessage && (
+            <div
+              role="status"
+              className="mb-5 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-sm text-emerald-300"
+            >
+              {auditMessage}
+            </div>
+          )}
+
+          {selectedAudit ? (
+            renderAuditReport(selectedAudit)
+          ) : active === "Overview" ? (
+            <>
+              <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  {
+                    label: "Tracked websites",
+                    value: projectsLoading ? "…" : String(projects.length),
+                    note: "Saved projects",
+                    icon: "◎",
+                  },
+                  {
+                    label: "Saved audits",
+                    value: auditsLoaded ? String(audits.length) : "—",
+                    note: auditsLoaded ? "Available reports" : "Load reports to count",
+                    icon: "▤",
+                  },
+                  {
+                    label: "Pages scanned",
+                    value: auditsLoaded
+                      ? String(
+                          audits.reduce(
+                            (total, audit) => total + audit.pages_scanned,
+                            0
+                          )
+                        )
+                      : "—",
+                    note: "Across loaded reports",
+                    icon: "⌁",
+                  },
+                  {
+                    label: "SEO health score",
+                    value: "—",
+                    note: "Scoring model not implemented",
+                    icon: "◉",
+                  },
+                ].map((metric) => (
+                  <div
+                    key={metric.label}
+                    className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-5"
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.045] text-lg text-cyan-300">
-                      {item.icon}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">{item.title}</span>
-                      <span className="mt-1 block text-xs text-slate-500">{item.detail}</span>
-                    </span>
-                    <span className="text-slate-600">↗</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mb-8 rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Your projects</h2>
-                <p className="mt-1 text-sm text-slate-500">Manage the websites you want to grow</p>
-              </div>
-              <button onClick={() => setShowProject(true)} className="text-sm font-medium text-cyan-300 hover:text-cyan-200">
-                + New project
-              </button>
-            </div>
-            <div className="divide-y divide-white/[0.07]">
-              {projects.slice(1).map((project) => (
-                <div key={project.name} className="flex items-center justify-between gap-4 py-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.05] text-lg">◎</div>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{project.name}</div>
-                      <div className="mt-1 text-xs text-slate-500">{project.status}</div>
+                    <div className="mb-5 flex items-center justify-between">
+                      <span className="text-sm text-slate-400">
+                        {metric.label}
+                      </span>
+                      <span className="text-xl text-slate-500">
+                        {metric.icon}
+                      </span>
+                    </div>
+                    <div className="text-3xl font-semibold tracking-tight">
+                      {metric.value}
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">
+                      {metric.note}
                     </div>
                   </div>
-                  <button onClick={() => setShowProject(true)} className="shrink-0 rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/[0.05]">
-                    Configure
+                ))}
+              </div>
+
+              <div className="mb-8 grid gap-5 xl:grid-cols-[1.4fr_1fr]">
+                <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+                  <h2 className="text-lg font-semibold">Get started</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Add a website, run a technical crawl, and review
+                    the actual page-level findings.
+                  </p>
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    <button
+                      onClick={() => selectNavigation("Projects")}
+                      className="rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200"
+                    >
+                      Manage projects
+                    </button>
+                    <button
+                      onClick={() => selectNavigation("Reports")}
+                      className="rounded-xl border border-white/10 px-4 py-3 text-sm font-medium hover:bg-white/[0.05]"
+                    >
+                      View reports
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+                  <h2 className="text-lg font-semibold">Audit coverage</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    The current crawler checks HTML metadata, headings,
+                    canonical declarations, robots meta tags, content length,
+                    and HTTP status.
+                  </p>
+                  <p className="mt-3 text-xs leading-5 text-slate-500">
+                    Search performance metrics, keyword rankings, and
+                    competitor data are not connected yet.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+                <div className="mb-5 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Your projects</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Start an audit or manage a website.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => selectNavigation("Projects")}
+                    className="text-sm text-cyan-300 hover:text-cyan-200"
+                  >
+                    All projects →
                   </button>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-cyan-300/15 bg-gradient-to-r from-cyan-300/[0.08] to-transparent p-6 sm:p-8">
-            <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-              <div>
-                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.15em] text-cyan-300">Your next step</div>
-                <h2 className="text-xl font-semibold">Turn your website into an SEO growth engine.</h2>
-                <p className="mt-2 text-sm text-slate-400">Start with a website, then uncover the issues and opportunities that matter.</p>
+                {renderProjects()}
               </div>
-              <button onClick={() => setShowProject(true)} className="shrink-0 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200">
-                Add your first website ↗
+            </>
+          ) : active === "Projects" ? (
+            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Tracked websites</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {projects.length} saved website
+                    {projects.length === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <button
+                  onClick={openProjectModal}
+                  className="rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/[0.05]"
+                >
+                  + Add website
+                </button>
+              </div>
+              {renderProjects()}
+            </div>
+          ) : active === "Site Audit" ? (
+            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+              <div className="mb-5">
+                <h2 className="text-lg font-semibold">Choose a website</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Each audit starts from the saved project URL.
+                </p>
+              </div>
+              {renderProjects()}
+              <div className="mt-6 border-t border-white/[0.07] pt-5">
+                <h3 className="text-sm font-semibold">Recent audit history</h3>
+                <button
+                  onClick={() => void openAuditHistory()}
+                  className="mt-3 text-sm text-cyan-300 hover:text-cyan-200"
+                >
+                  Load saved reports →
+                </button>
+              </div>
+            </div>
+          ) : active === "Reports" ? (
+            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Saved audit reports</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Reports stored in your Supabase database.
+                  </p>
+                </div>
+                <button
+                  onClick={() => void loadAudits()}
+                  disabled={auditsLoading}
+                  className="rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/[0.05] disabled:opacity-50"
+                >
+                  {auditsLoading ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
+              {renderAuditHistory()}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-8">
+              <div className="mb-3 inline-flex rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-1.5 text-xs text-amber-200">
+                Upcoming feature
+              </div>
+              <h2 className="text-xl font-semibold">
+                {pageTitles[active] || active}
+              </h2>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-slate-400">
+                {upcomingFeatures[active] ||
+                  "This feature is not available yet."}
+              </p>
+              <button
+                onClick={() => selectNavigation("Overview")}
+                className="mt-6 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05]"
+              >
+                Back to overview
               </button>
             </div>
-          </div>
+          )}
 
           <footer className="flex flex-col gap-2 py-8 text-xs text-slate-600 sm:flex-row sm:justify-between">
             <span>© 2026 RankPilot. Built for smarter search decisions.</span>
@@ -255,31 +1117,56 @@ export default function Home() {
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101521] p-6 shadow-2xl">
             <div className="mb-2 text-xl font-semibold">Add a website</div>
             <p className="mb-6 text-sm leading-6 text-slate-400">
-              Start a project to prepare for a technical SEO audit.
+              Save a website to your workspace before running its SEO audit.
             </p>
-            <form onSubmit={(event) => { event.preventDefault(); setShowProject(false); setActive("Projects"); }} className="space-y-4">
+
+            <form onSubmit={handleAddProject} className="space-y-4">
               <label className="block text-sm text-slate-300">
                 Website URL
                 <input
                   type="url"
                   required
+                  maxLength={2048}
                   placeholder="https://example.com"
                   value={domain}
                   onChange={(event) => setDomain(event.target.value)}
                   className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-cyan-300/60"
                 />
               </label>
+
+              {projectError && (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-sm text-red-300"
+                >
+                  {projectError}
+                </p>
+              )}
+
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowProject(false)} className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05]">
+                <button
+                  type="button"
+                  disabled={savingProject}
+                  onClick={() => {
+                    setShowProject(false);
+                    setProjectError("");
+                  }}
+                  className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05] disabled:opacity-60"
+                >
                   Cancel
                 </button>
-                <button type="submit" className="flex-1 rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200">
-                  Continue
+                <button
+                  type="submit"
+                  disabled={savingProject}
+                  className="flex-1 rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingProject ? "Saving..." : "Add website"}
                 </button>
               </div>
             </form>
+
             <p className="mt-4 text-xs leading-5 text-slate-500">
-              Preview only: this form does not save the project yet. We&apos;ll connect it to the database in a later step.
+              Only add websites you own or are authorized to audit.
             </p>
           </div>
         </div>
