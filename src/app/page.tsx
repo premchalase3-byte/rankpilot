@@ -67,6 +67,7 @@ const navigation: NavigationItem[] = [
   { label: "Competitors", icon: "◎" },
   { label: "Reports", icon: "▤" },
   { label: "Plans", icon: "◇" },
+  { label: "User Profile", icon: "♙" },
 ];
 
 const upcomingFeatures: Record<string, string> = {
@@ -74,8 +75,7 @@ const upcomingFeatures: Record<string, string> = {
     "Keyword discovery, search volume, difficulty, and ranking tracking are planned for a future release.",
   Competitors:
     "Competitor domain analysis and keyword gap discovery are planned for a future release.",
-  Plans:
-    "Subscription plans and billing are not connected yet.",
+  Plans: "Subscription plans and billing are not connected yet.",
 };
 
 function formatDate(value: string): string {
@@ -93,7 +93,8 @@ function getIssueCount(
   return pages.reduce(
     (total, page) =>
       total +
-      page.issues.filter((issue) => issue.severity === severity).length,
+      (page.issues ?? []).filter((issue) => issue.severity === severity)
+        .length,
     0
   );
 }
@@ -146,6 +147,9 @@ export default function DashboardPage() {
   const [selectedAudit, setSelectedAudit] = useState<AuditRecord | null>(null);
 
   const [signingOut, setSigningOut] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userLoading, setUserLoading] = useState(true);
+
   const [projectError, setProjectError] = useState("");
   const [projectMessage, setProjectMessage] = useState("");
 
@@ -215,6 +219,31 @@ export default function DashboardPage() {
     void loadProjects();
   }, [loadProjects]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadUserProfile() {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.getUser();
+
+        if (!mounted) return;
+
+        setUserEmail(error ? null : data.user?.email ?? null);
+      } catch {
+        if (mounted) setUserEmail(null);
+      } finally {
+        if (mounted) setUserLoading(false);
+      }
+    }
+
+    void loadUserProfile();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   async function handleAddProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSavingProject(true);
@@ -240,9 +269,7 @@ export default function DashboardPage() {
 
       setProjects((current) => [
         result.project,
-        ...current.filter(
-          (project) => project.id !== result.project.id
-        ),
+        ...current.filter((project) => project.id !== result.project.id),
       ]);
 
       setDomain("");
@@ -395,9 +422,7 @@ export default function DashboardPage() {
     setAuditMessage("");
     setSelectedAudit(null);
 
-    if (label === "Reports") {
-      void loadAudits();
-    } else if (label === "Site Audit") {
+    if (label === "Reports" || label === "Site Audit") {
       void loadAudits();
     }
   }
@@ -420,7 +445,7 @@ export default function DashboardPage() {
           </p>
           <button
             onClick={openProjectModal}
-            className="mt-4 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
+            className="rp-button mt-4 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
           >
             Add your first website
           </button>
@@ -433,7 +458,7 @@ export default function DashboardPage() {
         {projects.map((project) => (
           <div
             key={project.id}
-            className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between"
+            className="rp-card flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="flex min-w-0 items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.05] text-lg text-cyan-300">
@@ -464,7 +489,7 @@ export default function DashboardPage() {
                 disabled={
                   auditingProjectId !== null || deletingProjectId !== null
                 }
-                className="rounded-lg bg-cyan-300 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rp-button rounded-lg bg-cyan-300 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {auditingProjectId === project.id
                   ? "Crawling..."
@@ -474,7 +499,7 @@ export default function DashboardPage() {
               <button
                 onClick={() => void openAuditHistory(project.id)}
                 disabled={auditingProjectId !== null}
-                className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/[0.05] disabled:opacity-50"
+                className="rp-button rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/[0.05] disabled:opacity-50"
               >
                 View reports
               </button>
@@ -484,7 +509,7 @@ export default function DashboardPage() {
                 disabled={
                   deletingProjectId !== null || auditingProjectId !== null
                 }
-                className="rounded-lg border border-red-400/20 px-3 py-2 text-xs text-red-300 hover:bg-red-400/10 disabled:opacity-50"
+                className="rp-button rounded-lg border border-red-400/20 px-3 py-2 text-xs text-red-300 hover:bg-red-400/10 disabled:opacity-50"
               >
                 {deletingProjectId === project.id ? "Deleting..." : "Delete"}
               </button>
@@ -509,7 +534,7 @@ export default function DashboardPage() {
                 setSelectedAudit(null);
                 setActive("Reports");
               }}
-              className="mb-3 text-xs text-cyan-300 hover:text-cyan-200"
+              className="rp-button mb-3 text-xs text-cyan-300 hover:text-cyan-200"
             >
               ← Back to reports
             </button>
@@ -537,7 +562,7 @@ export default function DashboardPage() {
           ].map((metric) => (
             <div
               key={metric.label}
-              className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4"
+              className="rp-card rounded-xl border border-white/[0.08] bg-white/[0.02] p-4"
             >
               <div className="text-xs text-slate-500">{metric.label}</div>
               <div className="mt-2 text-2xl font-semibold">
@@ -561,43 +586,35 @@ export default function DashboardPage() {
             </h3>
             <ul className="mt-3 space-y-2 text-xs leading-5 text-slate-400">
               {errors.map((error, index) => (
-                <li key={`${index}-${error}`} className="break-words">
-                  {error}
-                </li>
+                <li key={`${error}-${index}`}>{error}</li>
               ))}
             </ul>
           </div>
         )}
 
         {pages.length === 0 ? (
-          <div className="rounded-xl border border-white/[0.08] p-6 text-sm text-slate-400">
-            No HTML pages were successfully analyzed. Check the crawl notices
-            above and try again.
+          <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-5 text-sm text-slate-400">
+            No page-level results were saved for this audit.
           </div>
         ) : (
           <div className="space-y-4">
             {pages.map((page, index) => (
               <div
                 key={`${page.url}-${index}`}
-                className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-4 sm:p-5"
+                className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-5 sm:p-6"
               >
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                   <div className="min-w-0">
-                    <a
-                      href={page.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="break-all text-sm font-medium text-cyan-300 hover:text-cyan-200"
-                    >
+                    <h3 className="break-all text-sm font-semibold">
+                      {page.title || "Missing page title"}
+                    </h3>
+                    <p className="mt-2 break-all text-xs text-slate-500">
                       {page.url}
-                    </a>
-                    <p className="mt-2 break-words text-sm text-slate-300">
-                      {page.title || "No page title found"}
                     </p>
                   </div>
 
                   <span
-                    className={`w-fit shrink-0 rounded-md border px-2.5 py-1 text-xs ${statusClass(
+                    className={`w-fit shrink-0 rounded-md border px-2 py-1 text-xs ${statusClass(
                       page.status
                     )}`}
                   >
@@ -605,65 +622,113 @@ export default function DashboardPage() {
                   </span>
                 </div>
 
-                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-                  <div className="rounded-lg bg-black/20 p-3">
-                    <div className="text-slate-500">Meta description</div>
-                    <div className="mt-1 break-words text-slate-300">
-                      {page.metaDescription || "Missing"}
-                    </div>
-                    <div className="mt-1 text-slate-500">
-                      {page.metaDescriptionLength} characters
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg bg-black/20 p-3">
-                    <div className="text-slate-500">Headings and content</div>
-                    <div className="mt-1 text-slate-300">
-                      H1 headings: {page.h1Count}
-                    </div>
-                    <div className="mt-1 text-slate-300">
-                      Approximate words: {page.wordCount}
-                    </div>
-                    {page.h1Texts.length > 0 && (
-                      <div className="mt-2 break-words text-slate-400">
-                        {page.h1Texts.join(" · ")}
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    {
+                      label: "Title length",
+                      value: page.titleLength,
+                    },
+                    {
+                      label: "Meta description",
+                      value: page.metaDescriptionLength,
+                    },
+                    {
+                      label: "H1 headings",
+                      value: page.h1Count,
+                    },
+                    {
+                      label: "Word count",
+                      value: page.wordCount,
+                    },
+                  ].map((metric) => (
+                    <div
+                      key={metric.label}
+                      className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
+                    >
+                      <div className="text-xs text-slate-500">
+                        {metric.label}
                       </div>
-                    )}
+                      <div className="mt-2 text-lg font-semibold">
+                        {metric.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs font-medium text-slate-400">
+                      Meta description
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      {page.metaDescription || "No meta description found."}
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="text-xs font-medium text-slate-400">
+                      Canonical URL
+                    </div>
+                    <p className="mt-2 break-all text-xs leading-5 text-slate-500">
+                      {page.canonical || "No canonical URL found."}
+                    </p>
                   </div>
                 </div>
 
-                <div className="mt-3 break-all text-xs text-slate-500">
-                  Canonical: {page.canonical || "Not declared"}
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <span className="rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-slate-400">
+                    Internal links: {page.internalLinks}
+                  </span>
+                  <span className="rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-slate-400">
+                    Broken links: {page.brokenInternalLinks}
+                  </span>
+                  <span className="rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-slate-400">
+                    H1 count: {page.h1Count}
+                  </span>
                 </div>
 
-                <div className="mt-1 break-words text-xs text-slate-500">
-                  Robots: {page.robotsMeta || "No robots meta tag detected"}
-                  {" · "}Internal links: {page.internalLinks}
-                </div>
+                {Array.isArray(page.h1Texts) && page.h1Texts.length > 0 && (
+                  <div className="mt-5">
+                    <div className="text-xs font-medium text-slate-400">
+                      H1 headings found
+                    </div>
+                    <ul className="mt-2 space-y-1 text-xs text-slate-500">
+                      {page.h1Texts.map((heading, headingIndex) => (
+                        <li key={`${heading}-${headingIndex}`}>{heading}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
-                <div className="mt-4 space-y-2">
-                  {page.issues.length === 0 ? (
+                <div className="mt-5 border-t border-white/[0.07] pt-5">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Issues ({page.issues?.length ?? 0})
+                  </h4>
+
+                  {!page.issues || page.issues.length === 0 ? (
                     <p className="text-xs text-emerald-300">
-                      No issues detected by the current checks.
+                      No issues were reported for this page by the current checks.
                     </p>
                   ) : (
-                    page.issues.map((issue, issueIndex) => (
-                      <div
-                        key={`${issue.code}-${issueIndex}`}
-                        className="flex flex-col gap-2 sm:flex-row sm:items-start"
-                      >
-                        <span
-                          className={`w-fit shrink-0 rounded-md border px-2 py-1 text-[10px] uppercase ${severityClass(
-                            issue.severity
-                          )}`}
+                    <div className="space-y-3">
+                      {page.issues.map((issue, issueIndex) => (
+                        <div
+                          key={`${issue.code}-${issueIndex}`}
+                          className="flex flex-col gap-2 sm:flex-row sm:items-start"
                         >
-                          {issue.severity}
-                        </span>
-                        <span className="text-xs leading-5 text-slate-300">
-                          {issue.message}
-                        </span>
-                      </div>
-                    ))
+                          <span
+                            className={`w-fit shrink-0 rounded-md border px-2 py-1 text-[10px] uppercase ${severityClass(
+                              issue.severity
+                            )}`}
+                          >
+                            {issue.severity}
+                          </span>
+                          <span className="text-xs leading-5 text-slate-300">
+                            {issue.message}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
@@ -698,7 +763,7 @@ export default function DashboardPage() {
           </p>
           <button
             onClick={() => setActive("Projects")}
-            className="mt-4 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
+            className="rp-button mt-4 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
           >
             Open projects
           </button>
@@ -717,7 +782,7 @@ export default function DashboardPage() {
           return (
             <div
               key={audit.id}
-              className="flex flex-col justify-between gap-4 py-5 sm:flex-row sm:items-center"
+              className="rp-card flex flex-col justify-between gap-4 py-5 sm:flex-row sm:items-center"
             >
               <div className="min-w-0">
                 <div className="text-sm font-medium">
@@ -735,7 +800,7 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setSelectedAudit(audit)}
-                className="w-fit rounded-lg border border-cyan-300/20 px-3 py-2 text-xs font-medium text-cyan-300 hover:bg-cyan-300/10"
+                className="rp-button w-fit rounded-lg border border-cyan-300/20 px-3 py-2 text-xs font-medium text-cyan-300 hover:bg-cyan-300/10"
               >
                 Open report →
               </button>
@@ -754,6 +819,7 @@ export default function DashboardPage() {
     Keywords: "Keyword research",
     Competitors: "Competitor intelligence",
     Plans: "RankPilot plans",
+    "User Profile": "Your account",
   };
 
   return (
@@ -778,7 +844,7 @@ export default function DashboardPage() {
             <button
               key={item.label}
               onClick={() => selectNavigation(item.label)}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${
+              className={`rp-button flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm ${
                 active === item.label
                   ? "border border-cyan-300/15 bg-cyan-300/10 font-medium text-cyan-300"
                   : "text-slate-400 hover:bg-white/[0.04] hover:text-white"
@@ -804,28 +870,9 @@ export default function DashboardPage() {
           </p>
           <button
             onClick={() => selectNavigation("Site Audit")}
-            className="w-full rounded-lg border border-white/10 px-3 py-2 text-xs font-medium hover:bg-white/[0.06]"
+            className="rp-button w-full rounded-lg border border-white/10 px-3 py-2 text-xs font-medium hover:bg-white/[0.06]"
           >
             Open site audits ↗
-          </button>
-        </div>
-
-        <div className="mt-5 border-t border-white/[0.07] pt-5">
-          <div className="mb-3 flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-sm font-semibold">
-              P
-            </div>
-            <div>
-              <div className="text-sm font-medium">Your workspace</div>
-              <div className="text-xs text-slate-500">Free plan</div>
-            </div>
-          </div>
-          <button
-            onClick={handleLogout}
-            disabled={signingOut}
-            className="w-full rounded-xl border border-white/10 px-3 py-2.5 text-sm text-slate-400 hover:bg-white/[0.05] hover:text-white disabled:opacity-60"
-          >
-            {signingOut ? "Signing out..." : "Sign out"}
           </button>
         </div>
       </aside>
@@ -844,14 +891,17 @@ export default function DashboardPage() {
             </span>
             <button
               onClick={openProjectModal}
-              className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-200"
+              className="rp-button rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-cyan-200"
             >
               + Add project
             </button>
           </div>
         </header>
 
-        <div className="mx-auto max-w-[1400px] p-5 sm:p-8">
+        <div
+          key={`${active}-${selectedAudit?.id ?? ""}`}
+          className="rp-page-enter mx-auto max-w-[1400px] p-5 sm:p-8"
+        >
           <div className="mb-8">
             <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-cyan-300">
               <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" />
@@ -872,7 +922,9 @@ export default function DashboardPage() {
                       ? "Run a multi-page technical crawl against one of your saved websites."
                       : active === "Reports"
                         ? "Open previous audits saved to your account."
-                        : upcomingFeatures[active] || ""}
+                        : active === "User Profile"
+                          ? "View your account email and manage your sign-in session."
+                          : upcomingFeatures[active] || ""}
             </p>
           </div>
 
@@ -927,7 +979,9 @@ export default function DashboardPage() {
                   {
                     label: "Saved audits",
                     value: auditsLoaded ? String(audits.length) : "—",
-                    note: auditsLoaded ? "Available reports" : "Load reports to count",
+                    note: auditsLoaded
+                      ? "Available reports"
+                      : "Load reports to count",
                     icon: "▤",
                   },
                   {
@@ -952,7 +1006,7 @@ export default function DashboardPage() {
                 ].map((metric) => (
                   <div
                     key={metric.label}
-                    className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-5"
+                    className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-5"
                   >
                     <div className="mb-5 flex items-center justify-between">
                       <span className="text-sm text-slate-400">
@@ -973,29 +1027,29 @@ export default function DashboardPage() {
               </div>
 
               <div className="mb-8 grid gap-5 xl:grid-cols-[1.4fr_1fr]">
-                <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+                <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
                   <h2 className="text-lg font-semibold">Get started</h2>
                   <p className="mt-2 text-sm leading-6 text-slate-400">
-                    Add a website, run a technical crawl, and review
-                    the actual page-level findings.
+                    Add a website, run a technical crawl, and review the actual
+                    page-level findings.
                   </p>
                   <div className="mt-6 flex flex-wrap gap-3">
                     <button
                       onClick={() => selectNavigation("Projects")}
-                      className="rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200"
+                      className="rp-button rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200"
                     >
                       Manage projects
                     </button>
                     <button
                       onClick={() => selectNavigation("Reports")}
-                      className="rounded-xl border border-white/10 px-4 py-3 text-sm font-medium hover:bg-white/[0.05]"
+                      className="rp-button rounded-xl border border-white/10 px-4 py-3 text-sm font-medium hover:bg-white/[0.05]"
                     >
                       View reports
                     </button>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+                <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
                   <h2 className="text-lg font-semibold">Audit coverage</h2>
                   <p className="mt-2 text-sm leading-6 text-slate-400">
                     The current crawler checks HTML metadata, headings,
@@ -1009,7 +1063,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+              <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
                 <div className="mb-5 flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold">Your projects</h2>
@@ -1019,7 +1073,7 @@ export default function DashboardPage() {
                   </div>
                   <button
                     onClick={() => selectNavigation("Projects")}
-                    className="text-sm text-cyan-300 hover:text-cyan-200"
+                    className="rp-button text-sm text-cyan-300 hover:text-cyan-200"
                   >
                     All projects →
                   </button>
@@ -1028,7 +1082,7 @@ export default function DashboardPage() {
               </div>
             </>
           ) : active === "Projects" ? (
-            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+            <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
               <div className="mb-5 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Tracked websites</h2>
@@ -1039,7 +1093,7 @@ export default function DashboardPage() {
                 </div>
                 <button
                   onClick={openProjectModal}
-                  className="rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/[0.05]"
+                  className="rp-button rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/[0.05]"
                 >
                   + Add website
                 </button>
@@ -1047,7 +1101,7 @@ export default function DashboardPage() {
               {renderProjects()}
             </div>
           ) : active === "Site Audit" ? (
-            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+            <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
               <div className="mb-5">
                 <h2 className="text-lg font-semibold">Choose a website</h2>
                 <p className="mt-1 text-sm text-slate-500">
@@ -1059,14 +1113,14 @@ export default function DashboardPage() {
                 <h3 className="text-sm font-semibold">Recent audit history</h3>
                 <button
                   onClick={() => void openAuditHistory()}
-                  className="mt-3 text-sm text-cyan-300 hover:text-cyan-200"
+                  className="rp-button mt-3 text-sm text-cyan-300 hover:text-cyan-200"
                 >
                   Load saved reports →
                 </button>
               </div>
             </div>
           ) : active === "Reports" ? (
-            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
+            <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-7">
               <div className="mb-5 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Saved audit reports</h2>
@@ -1077,15 +1131,63 @@ export default function DashboardPage() {
                 <button
                   onClick={() => void loadAudits()}
                   disabled={auditsLoading}
-                  className="rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/[0.05] disabled:opacity-50"
+                  className="rp-button rounded-lg border border-white/10 px-3 py-2 text-xs hover:bg-white/[0.05] disabled:opacity-50"
                 >
                   {auditsLoading ? "Refreshing..." : "Refresh"}
                 </button>
               </div>
               {renderAuditHistory()}
             </div>
+          ) : active === "User Profile" ? (
+            <div className="profile-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-8">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-300/10 text-2xl text-cyan-300">
+                ♙
+              </div>
+
+              <h2 className="mt-5 text-xl font-semibold">User Profile</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                Manage your RankPilot account and sign-in session.
+              </p>
+
+              <div className="mt-7 max-w-xl rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+                <div className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Email address
+                </div>
+                <div className="mt-2 break-all text-sm text-slate-100">
+                  {userLoading
+                    ? "Loading account..."
+                    : userEmail || "Unable to load your email"}
+                </div>
+                <div className="mt-3 text-xs text-slate-500">
+                  Your authenticated account email from Supabase.
+                </div>
+              </div>
+
+              {projectError && (
+                <p
+                  role="alert"
+                  className="mt-5 rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-sm text-red-300"
+                >
+                  {projectError}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                disabled={signingOut}
+                className="rp-button mt-7 inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-5 py-3 text-sm font-semibold text-red-300 hover:bg-red-400/[0.12] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {signingOut ? "Signing out..." : "Log out"}
+                {!signingOut && <span aria-hidden="true">↗</span>}
+              </button>
+
+              <p className="mt-3 text-xs text-slate-500">
+                You will be redirected to the sign-in page after logging out.
+              </p>
+            </div>
           ) : (
-            <div className="rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-8">
+            <div className="rp-card rounded-2xl border border-white/[0.08] bg-[#0d111b] p-6 sm:p-8">
               <div className="mb-3 inline-flex rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-1.5 text-xs text-amber-200">
                 Upcoming feature
               </div>
@@ -1098,7 +1200,7 @@ export default function DashboardPage() {
               </p>
               <button
                 onClick={() => selectNavigation("Overview")}
-                className="mt-6 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05]"
+                className="rp-button mt-6 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05]"
               >
                 Back to overview
               </button>
@@ -1113,8 +1215,8 @@ export default function DashboardPage() {
       </section>
 
       {showProject && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101521] p-6 shadow-2xl">
+        <div className="rp-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="rp-modal-content w-full max-w-md rounded-2xl border border-white/10 bg-[#101521] p-6 shadow-2xl">
             <div className="mb-2 text-xl font-semibold">Add a website</div>
             <p className="mb-6 text-sm leading-6 text-slate-400">
               Save a website to your workspace before running its SEO audit.
@@ -1151,14 +1253,14 @@ export default function DashboardPage() {
                     setShowProject(false);
                     setProjectError("");
                   }}
-                  className="flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05] disabled:opacity-60"
+                  className="rp-button flex-1 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/[0.05] disabled:opacity-60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingProject}
-                  className="flex-1 rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rp-button flex-1 rounded-xl bg-cyan-300 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {savingProject ? "Saving..." : "Add website"}
                 </button>
@@ -1171,6 +1273,113 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        .rp-page-enter {
+          animation: rp-page-enter 200ms ease-out both;
+        }
+
+        .rp-card {
+          animation: rp-card-enter 220ms ease-out both;
+          transition:
+            border-color 160ms ease,
+            background-color 160ms ease,
+            transform 160ms ease;
+        }
+
+        .rp-card:hover {
+          border-color: rgba(255, 255, 255, 0.13);
+        }
+
+        .rp-button,
+        button {
+          transition:
+            background-color 160ms ease,
+            border-color 160ms ease,
+            color 160ms ease,
+            transform 160ms ease,
+            opacity 160ms ease;
+        }
+
+        button:not(:disabled):active {
+          transform: scale(0.98);
+        }
+
+        button:focus-visible {
+          outline: 2px solid rgba(103, 232, 249, 0.8);
+          outline-offset: 3px;
+        }
+
+        .profile-card {
+          animation: rp-page-enter 220ms ease-out both;
+        }
+
+        .rp-modal-overlay {
+          animation: rp-fade-in 160ms ease-out both;
+        }
+
+        .rp-modal-content {
+          animation: rp-modal-enter 200ms ease-out both;
+        }
+
+        @keyframes rp-page-enter {
+          from {
+            opacity: 0;
+            transform: translateY(7px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes rp-card-enter {
+          from {
+            opacity: 0.7;
+            transform: translateY(4px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes rp-fade-in {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+
+        @keyframes rp-modal-enter {
+          from {
+            opacity: 0;
+            transform: translateY(8px) scale(0.99);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .rp-page-enter,
+          .rp-card,
+          .profile-card,
+          .rp-modal-overlay,
+          .rp-modal-content {
+            animation: none !important;
+          }
+
+          button,
+          .rp-button,
+          .rp-card {
+            transition: none !important;
+          }
+        }
+      `}</style>
     </main>
   );
 }
